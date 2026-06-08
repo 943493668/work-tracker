@@ -1,0 +1,13 @@
+# Generated data
+daily/
+repos.txt
+svn-repos.txt
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# System
+.DS_Store
+*.log

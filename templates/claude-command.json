@@ -1,0 +1,9 @@
+{
+  "rules": [
+    {
+      "name": "weekly-report",
+      "trigger": ["周报", "weekly report", "本周工作", "工作内容", "generate weekly"],
+      "action": "Run command: python3 ~/.local/share/work-tracker/reporter.py concise\n\nSummarize the output into a clean weekly report grouped by project. Each item should be 5-15 characters. Include statistics at the end."
+    }
+  ]
+}

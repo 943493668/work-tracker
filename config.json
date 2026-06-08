@@ -1,0 +1,11 @@
+{
+  "ignored_commands": ["cd", "ls", "ll", "pwd", "clear", "exit", "history", "top", "htop"],
+  "ignored_file_patterns": ["node_modules", ".git", ".svn", ".next", "dist", "build", "*.log", "*.tmp"],
+  "code_file_extensions": [".ts", ".tsx", ".js", ".jsx", ".vue", ".py", ".go", ".rs", ".java", ".kt", ".cs", ".css", ".scss", ".less", ".html", ".json", ".yaml", ".yml", ".toml", ".sh", ".bash", ".zsh", ".md", ".sql", ".dockerfile"],
+  "timezone": "Asia/Shanghai",
+  "week_start": 1,
+  "report_mode": "concise",
+  "svn": {
+    "timeout_seconds": 10
+  }
+}

@@ -76,10 +76,15 @@ bash uninstall.sh
 ```
 ## 周报：2026-06-02 ~ 2026-06-08
 
-### hyf_lobehub（8 项）
-1. 修复智能体展示名称问题
-2. 解决退出登录功能无效
-3. 修复注册页面请求卡死
+### my-web-app（8 项）
+1. 修复用户登录功能
+2. 优化数据库查询性能
+3. 新增数据导出接口
+
+### backend-service（3 项）
+1. 升级依赖版本
+2. 修复 API 超时问题
+3. 添加单元测试覆盖
 
 ## Statistics
 - Git Commits: 12  |  SVN Commits: 5
@@ -89,11 +94,15 @@ bash uninstall.sh
 ### detailed 模式
 
 ```
-### hyf_lobehub（8 项）
-1. [hyf_lobehub][a1b2c3d] fix: 智能体展示名称修复
+### my-web-app（8 项）
+1. [my-web-app][a1b2c3d] fix: 用户登录功能修复
    文件变更: 3, +45/-12
-2. [hyf_lobehub][r12345] 更新智能体管理后台
-   文件变更: 5, 新增: 1, 修改: 3, 删除: 1
+2. [my-web-app][b2c3d4e] feat: 新增数据导出接口
+   文件变更: 5, 新增: 2, 修改: 2, 删除: 1
+
+### backend-service（3 项）
+1. [backend-service][r12345] chore: 升级依赖版本
+   文件变更: 1, +10/-10
 
 ## Statistics
 - Git Commits: 12  |  SVN Commits: 5

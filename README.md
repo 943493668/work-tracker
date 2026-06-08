@@ -2,6 +2,16 @@
 
 跨工具工作活动追踪与周报生成工具。自动采集 Git、SVN、Shell 命令和 opencode 对话记录，一键生成精简周报。
 
+## 为什么用它
+
+还在为写周报翻聊天记录、查 Git log 而头疼？Work Tracker 帮你自动化这个过程。
+
+**做什么：** 后台静默采集你的日常开发活动 —— Git commit、SVN commit、终端命令、opencode 对话 —— 统一写入 JSON 日志（每日 ~50KB）。
+
+**怎么用：** 在 opencode 输入"生成周报"，即可按项目分组输出精简摘要（concise，适合上交）或详细复盘（detailed，适合团队 review）。Cursor / Claude Code / Windsurf 用户只需把 rules 文件放到对应目录同样触发。
+
+**特点：** 零依赖（不需要 sudo 或装第三方库）、零常驻（无 systemd/inotifywait）、全本地存储、支持 WSL + Windows opencode 混合环境。别人 clone 后一条 `bash install.sh` 就能用。
+
 ## 功能
 
 - **Git 提交追踪** — 每小时自动扫描本地 Git 仓库的 commit
@@ -9,11 +19,12 @@
 - **Shell 命令记录** — 通过 bash 钩子记录终端命令（full 模式）
 - **opencode 对话** — 实时读取 opencode 聊天记录
 - **两种周报模式** — concise（精简，5-15字/条）或 detailed（详细含技术细节）
+- **多工具适配** — 同时支持 opencode / Cursor / Claude Code / Windsurf
 
 ## 安装
 
 ```bash
-git clone https://github.com/yqy/work-tracker.git
+git clone https://github.com/943493668/work-tracker.git
 cd work-tracker
 bash install.sh        # 交互式选择 lite/full
 bash install.sh lite   # 仅 Git+SVN

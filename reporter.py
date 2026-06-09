@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
 import json
+import os
+import shutil
 import sqlite3
 import sys
+import tempfile
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -9,6 +12,9 @@ WORK_TRACKER_DIR = Path.home() / ".local" / "share" / "work-tracker"
 DAILY_DIR = WORK_TRACKER_DIR / "daily"
 CONFIG_FILE = WORK_TRACKER_DIR / "config.json"
 OPENCODE_DB = Path.home() / ".local" / "share" / "opencode" / "opencode.db"
+
+def log_warning(msg):
+    print(f"[warn] {msg}", file=sys.stderr)
 
 def load_config():
     if CONFIG_FILE.exists():
@@ -30,16 +36,42 @@ def read_daily_logs(start, end):
             try:
                 data = json.loads(log_file.read_text())
                 activities.extend(data.get("activities", []))
-            except json.JSONDecodeError:
-                pass
+            except json.JSONDecodeError as e:
+                log_warning(f"invalid JSON in {log_file}: {e}")
     return activities
+
+def _open_opencode_db():
+    """Open readonly+nolock; fallback to a temp copy if lock contention."""
+    try:
+        conn = sqlite3.connect(
+            f"file:{OPENCODE_DB}?mode=ro&nolock=1",
+            uri=True,
+            timeout=3,
+        )
+        conn.execute("PRAGMA busy_timeout = 3000")
+        conn.execute("PRAGMA temp_store = MEMORY")
+        conn.execute("SELECT count(*) FROM session")
+        return conn
+    except Exception as e:
+        log_warning(f"readonly nolock failed ({e}), falling back to temp copy")
+        tmp = tempfile.mktemp(suffix=".db", prefix="opencode_report_")
+        try:
+            shutil.copy2(str(OPENCODE_DB), tmp)
+            conn = sqlite3.connect(tmp, timeout=5)
+            conn.execute("PRAGMA busy_timeout = 5000")
+            return conn
+        except Exception as e2:
+            log_warning(f"temp copy also failed: {e2}")
+            return None
 
 def read_opencode_sessions(start, end):
     sessions = []
     if not OPENCODE_DB.exists():
         return sessions
+    conn = _open_opencode_db()
+    if conn is None:
+        return sessions
     try:
-        conn = sqlite3.connect(f"file:{OPENCODE_DB}?mode=ro", uri=True)
         cur = conn.cursor()
         start_ms = int(start.timestamp() * 1000)
         cur.execute("""
@@ -51,7 +83,7 @@ def read_opencode_sessions(start, end):
             try:
                 m = json.loads(model_str) if model_str else {}
                 model = m.get("modelID", "")
-            except:
+            except Exception:
                 pass
             cur.execute("""
                 SELECT id, time_created FROM message
@@ -66,7 +98,7 @@ def read_opencode_sessions(start, end):
                         p = json.loads(part_data)
                         if p.get("type") == "text":
                             user_msgs.append(p.get("text", "")[:120])
-                    except:
+                    except Exception:
                         pass
             dt = datetime.fromtimestamp(created / 1000)
             home_path = str(Path.home())
@@ -91,9 +123,20 @@ def read_opencode_sessions(start, end):
                 "project": project,
                 "user_messages": user_msgs[:8]
             })
-        conn.close()
-    except:
-        pass
+    except Exception as e:
+        log_warning(f"read_opencode_sessions error: {e}")
+    finally:
+        try:
+            db_path = conn.execute("PRAGMA database_list").fetchall()
+            conn.close()
+            for _, _, path in db_path:
+                if path and path.startswith(tempfile.gettempdir()):
+                    try:
+                        os.unlink(path)
+                    except OSError:
+                        pass
+        except Exception:
+            pass
     return sessions
 
 def group_by_project(activities):

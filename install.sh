@@ -41,10 +41,10 @@ fi
 
 touch "$INSTALL_DIR/repos.txt" "$INSTALL_DIR/svn-repos.txt"
 
-echo "安装 cron 任务（Git 每整点，SVN 每整点后5分钟）..."
-(crontab -l 2>/dev/null | grep -v "work-tracker-git-collect\|work-tracker-svn-collect"; \
- echo "0 * * * * $BIN_DIR/work-tracker-git-collect.sh"; \
- echo "5 * * * * $BIN_DIR/work-tracker-svn-collect.sh") | crontab -
+echo "安装 cron 任务（Git/SVN 每 30 分钟）..."
+(crontab -l 2>/dev/null | grep -v "work-tracker"; \
+ echo "*/30 * * * * $BIN_DIR/work-tracker-git-collect.sh >> /tmp/work-tracker-git.log 2>&1"; \
+ echo "*/30 8-23 * * * $BIN_DIR/work-tracker-svn-collect.sh >> /tmp/work-tracker-svn.log 2>&1") | crontab -
 
 echo "检测 opencode 运行环境..."
 WIN_USER_DIR="/mnt/c/Users/$USERNAME"

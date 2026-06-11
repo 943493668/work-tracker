@@ -11,7 +11,37 @@ from pathlib import Path
 WORK_TRACKER_DIR = Path.home() / ".local" / "share" / "work-tracker"
 DAILY_DIR = WORK_TRACKER_DIR / "daily"
 CONFIG_FILE = WORK_TRACKER_DIR / "config.json"
-OPENCODE_DB = Path.home() / ".local" / "share" / "opencode" / "opencode.db"
+
+
+def _find_opencode_db() -> Path:
+    wsl_native = Path.home() / ".local" / "share" / "opencode" / "opencode.db"
+    win_user = Path("/mnt/c/Users")
+    if win_user.exists():
+        win_name = ""
+        for d in sorted(win_user.iterdir(), key=lambda p: p.stat().st_mtime, reverse=True):
+            if d.is_dir() and d.name not in ("Public", "Default", "Default User", "All Users"):
+                win_name = d.name
+                break
+        if win_name:
+            win_db = win_user / win_name / ".local" / "share" / "opencode" / "opencode.db"
+            if win_db.exists():
+                return win_db
+    return wsl_native
+
+
+OPENCODE_DB = _find_opencode_db()
+
+
+def _detect_win_username() -> str:
+    win_users = Path("/mnt/c/Users")
+    if not win_users.exists():
+        return ""
+    skip = {"Public", "Default", "Default User", "All Users"}
+    for d in sorted(win_users.iterdir(), key=lambda p: p.stat().st_mtime, reverse=True):
+        if d.is_dir() and d.name not in skip:
+            return d.name
+    return ""
+
 
 def log_warning(msg):
     print(f"[warn] {msg}", file=sys.stderr)
@@ -41,19 +71,18 @@ def read_daily_logs(start, end):
     return activities
 
 def _open_opencode_db():
-    """Open readonly+nolock; fallback to a temp copy if lock contention."""
+    """Open readonly; fallback to a temp copy if lock contention."""
     try:
         conn = sqlite3.connect(
-            f"file:{OPENCODE_DB}?mode=ro&nolock=1",
+            f"file:{OPENCODE_DB}?mode=ro",
             uri=True,
             timeout=3,
         )
         conn.execute("PRAGMA busy_timeout = 3000")
-        conn.execute("PRAGMA temp_store = MEMORY")
         conn.execute("SELECT count(*) FROM session")
         return conn
     except Exception as e:
-        log_warning(f"readonly nolock failed ({e}), falling back to temp copy")
+        log_warning(f"readonly open failed ({e}), falling back to temp copy")
         tmp = tempfile.mktemp(suffix=".db", prefix="opencode_report_")
         try:
             shutil.copy2(str(OPENCODE_DB), tmp)
@@ -64,6 +93,36 @@ def _open_opencode_db():
             log_warning(f"temp copy also failed: {e2}")
             return None
 
+def _load_known_repos():
+    repos = {}
+    for fname in ("repos.txt", "svn-repos.txt"):
+        repo_file = WORK_TRACKER_DIR / fname
+        if repo_file.exists():
+            for line in repo_file.read_text().strip().splitlines():
+                line = line.strip()
+                if line:
+                    repos[Path(line).name] = line
+    return repos
+
+
+def _infer_project_from_messages(user_msgs, known_repos):
+    meaningful = [m for m in user_msgs if not m.lstrip().startswith("##")]
+    all_text = " ".join(meaningful)
+    home_variants = [str(Path.home()), f"/home/{Path.home().name}"]
+    for repo_name, repo_path in known_repos.items():
+        if repo_name in all_text or repo_path in all_text:
+            return repo_name
+        path_variants = [
+            repo_path.replace("\\", "/"),
+        ]
+        for h in home_variants:
+            path_variants.append(repo_path.replace(f"{h}/", ""))
+        for v in path_variants:
+            if v in all_text:
+                return repo_name
+    return None
+
+
 def read_opencode_sessions(start, end):
     sessions = []
     if not OPENCODE_DB.exists():
@@ -71,14 +130,17 @@ def read_opencode_sessions(start, end):
     conn = _open_opencode_db()
     if conn is None:
         return sessions
+    known_repos = _load_known_repos()
     try:
         cur = conn.cursor()
         start_ms = int(start.timestamp() * 1000)
         cur.execute("""
-            SELECT id, title, time_created, model, directory
+            SELECT id, title, time_created, model, directory, parent_id
             FROM session WHERE time_created >= ? ORDER BY time_created DESC
         """, (start_ms,))
-        for sid, title, created, model_str, directory in cur.fetchall():
+        for row in cur.fetchall():
+            sid, title, created, model_str, directory, parent_id = row
+            is_subagent = parent_id is not None
             model = ""
             try:
                 m = json.loads(model_str) if model_str else {}
@@ -97,19 +159,27 @@ def read_opencode_sessions(start, end):
                     try:
                         p = json.loads(part_data)
                         if p.get("type") == "text":
-                            user_msgs.append(p.get("text", "")[:120])
+                            user_msgs.append(p.get("text", "")[:200])
                     except Exception:
                         pass
             dt = datetime.fromtimestamp(created / 1000)
             home_path = str(Path.home())
             home_name = Path(home_path).name
-            # 判断目录是否是用户主目录（WSL 或 Windows）
-            if not directory or directory in (home_path, f"/mnt/c/Users/{home_name}", "/mnt/c/Users/Lenovo"):
-                project = "opencode 杂项"
+            normalized_dir = directory or ""
+            if normalized_dir.startswith("//wsl.localhost/"):
+                parts = normalized_dir.split("/")
+                if len(parts) >= 5:
+                    normalized_dir = "/" + "/".join(parts[4:])
+            win_user = _detect_win_username()
+            user_home_dirs = {home_path, f"/home/{home_name}"}
+            if win_user:
+                user_home_dirs.add(f"/mnt/c/Users/{win_user}")
+            if not normalized_dir or normalized_dir in user_home_dirs:
+                inferred = _infer_project_from_messages(user_msgs, known_repos)
+                project = inferred if inferred else "opencode 杂项"
             else:
-                dir_name = Path(directory).name
-                # Windows Users 文件夹也算是主目录
-                if dir_name in ("Users", home_name, "Lenovo"):
+                dir_name = Path(normalized_dir).name
+                if dir_name in ("Users", home_name, win_user):
                     project = "opencode 杂项"
                 else:
                     project = dir_name
@@ -121,7 +191,8 @@ def read_opencode_sessions(start, end):
                 "model": model,
                 "directory": directory or "",
                 "project": project,
-                "user_messages": user_msgs[:8]
+                "user_messages": user_msgs[:8],
+                "is_subagent": is_subagent
             })
     except Exception as e:
         log_warning(f"read_opencode_sessions error: {e}")
@@ -164,23 +235,23 @@ def print_report(start, end, mode="concise"):
 
     print(f"## 周报：{start_str} ~ {end_str}\n")
 
-    stats = {"git": 0, "svn": 0, "shell": 0, "opencode": 0}
+    stats = {"git": 0, "svn": 0, "shell": 0, "opencode": 0, "opencode_sub": 0}
     for a in all_activities:
         t = a.get("type", "")
         if "git" in t: stats["git"] += 1
         elif "svn" in t: stats["svn"] += 1
         elif t == "shell_command": stats["shell"] += 1
-        elif t == "opencode_session": stats["opencode"] += 1
+        elif t == "opencode_session":
+            if a.get("is_subagent"):
+                stats["opencode_sub"] += 1
+            else:
+                stats["opencode"] += 1
 
     for project, items in sorted(groups.items()):
         if project == "other":
             continue
-        printable = [i for i in items if i.get("type") in ("git_commit", "svn_commit", "opencode_session")]
-        if not printable:
-            continue
-        print(f"### {project} ({len(printable)} 项)\n")
         seen = set()
-        idx = 1
+        display_items = []
         for item in items:
             t = item.get("type", "")
             if t in ("git_commit", "svn_commit"):
@@ -188,6 +259,33 @@ def print_report(start, end, mode="concise"):
                 if not msg or msg in seen or len(msg) < 3:
                     continue
                 seen.add(msg)
+                display_items.append(("commit", item))
+            elif t == "opencode_session":
+                if item.get("is_subagent") and mode == "concise":
+                    continue
+                title = item.get("title", "") or ""
+                if title.lower() == "greeting" or title in seen:
+                    continue
+                seen.add(title)
+                if title.startswith("New session -"):
+                    fallback = ""
+                    for um in item.get("user_messages", []):
+                        s = um.replace('\n', ' ').strip()
+                        if s and len(s) > 5 and not s.startswith("##"):
+                            fallback = s[:50]
+                            break
+                    if not fallback and mode == "concise":
+                        continue
+                    item = dict(item)
+                    item["title"] = fallback or title
+                display_items.append(("session", item))
+        if not display_items:
+            continue
+        print(f"### {project} ({len(display_items)} 项)\n")
+        idx = 1
+        for kind, item in display_items:
+            if kind == "commit":
+                msg = item.get("message", "").strip()
                 if mode == "concise":
                     print(f"{idx}. {msg[:40]}")
                 else:
@@ -200,15 +298,13 @@ def print_report(start, end, mode="concise"):
                     if ins or dl:
                         print(f"   文件变更: {fc}, +{ins}/-{dl}")
                 idx += 1
-            elif t == "opencode_session":
-                title = item.get("title", "")
-                if not title or title.startswith("New session -") or title in seen or title.lower() == "greeting":
-                    continue
-                seen.add(title)
+            else:
+                title = item.get("title", "") or "untitled"
                 if mode == "concise":
                     print(f"{idx}. {title[:50]}")
                 else:
-                    print(f"{idx}. {title}")
+                    prefix = "  [sub]" if item.get("is_subagent") else ""
+                    print(f"{idx}. {prefix}{title}")
                     for um in item.get("user_messages", [])[:3]:
                         preview = um.replace('\n', ' ')[:80]
                         if preview.strip():
@@ -223,8 +319,12 @@ def print_report(start, end, mode="concise"):
         print(f"- SVN Commits: {stats['svn']}")
     if stats["shell"]:
         print(f"- Shell 命令: {stats['shell']} 条")
-    if stats["opencode"]:
-        print(f"- AI 会话: {stats['opencode']} 次")
+    total_ai = stats["opencode"] + stats["opencode_sub"]
+    if total_ai:
+        if stats["opencode_sub"]:
+            print(f"- AI 会话: {total_ai} 次 (含 {stats['opencode_sub']} 次子任务)")
+        else:
+            print(f"- AI 会话: {total_ai} 次")
 
 if __name__ == "__main__":
     config = load_config()

@@ -9,6 +9,9 @@ set -euo pipefail
 INSTALL_DIR="$HOME/.local/share/work-tracker"
 DAILY_DIR="$INSTALL_DIR/daily"
 TODAY=$(date +%Y-%m-%d)
+
+[[ "$TODAY" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] || exit 1
+
 DAILY_FILE="$DAILY_DIR/$TODAY.json"
 
 TYPE="${1:?usage: log-writer.sh <type> <json_payload>}"
@@ -30,11 +33,13 @@ printf '%s' "{\"type\": \"$TYPE\", \"time\": \"$TIME\", $PAYLOAD}" > "$ENTRY_FIL
     echo "{\"date\": \"$TODAY\", \"activities\": []}" > "$DAILY_FILE"
   fi
 
-  python3 - "$DAILY_FILE" "$ENTRY_FILE" <<'PYEOF'
+  TMP_OUT=$(mktemp)
+  python3 - "$DAILY_FILE" "$ENTRY_FILE" "$TMP_OUT" <<'PYEOF'
 import json, sys
 
 daily_file = sys.argv[1]
 entry_file = sys.argv[2]
+tmp_out = sys.argv[3]
 
 with open(daily_file, 'r') as f:
     data = json.load(f)
@@ -44,7 +49,8 @@ with open(entry_file, 'r') as f:
 
 data['activities'].append(entry)
 
-with open(daily_file, 'w') as f:
+with open(tmp_out, 'w') as f:
     json.dump(data, f, ensure_ascii=False, indent=2)
 PYEOF
+  mv "$TMP_OUT" "$DAILY_FILE"
 ) 200>"$LOCK_FILE"

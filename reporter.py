@@ -11,6 +11,8 @@ from pathlib import Path
 WORK_TRACKER_DIR = Path.home() / ".local" / "share" / "work-tracker"
 DAILY_DIR = WORK_TRACKER_DIR / "daily"
 CONFIG_FILE = WORK_TRACKER_DIR / "config.json"
+CODEX_DIR = Path.home() / ".codex"
+CODEX_STATE_DB = CODEX_DIR / "state_5.sqlite"
 
 
 def _find_opencode_db() -> Path:
@@ -46,6 +48,31 @@ def _detect_win_username() -> str:
 def log_warning(msg):
     print(f"[warn] {msg}", file=sys.stderr)
 
+
+def _open_sqlite_readonly(db_path: Path, validation_sql: str):
+    """Open readonly; fallback to a temp copy if lock contention."""
+    try:
+        conn = sqlite3.connect(
+            f"file:{db_path}?mode=ro",
+            uri=True,
+            timeout=3,
+        )
+        conn.execute("PRAGMA busy_timeout = 3000")
+        conn.execute(validation_sql)
+        return conn
+    except Exception as e:
+        log_warning(f"readonly open failed for {db_path.name} ({e}), falling back to temp copy")
+        tmp = tempfile.mktemp(suffix=".db", prefix=f"{db_path.stem}_report_")
+        try:
+            shutil.copy2(str(db_path), tmp)
+            conn = sqlite3.connect(tmp, timeout=5)
+            conn.execute("PRAGMA busy_timeout = 5000")
+            conn.execute(validation_sql)
+            return conn
+        except Exception as e2:
+            log_warning(f"temp copy also failed for {db_path.name}: {e2}")
+            return None
+
 def load_config():
     if CONFIG_FILE.exists():
         return json.loads(CONFIG_FILE.read_text())
@@ -71,27 +98,11 @@ def read_daily_logs(start, end):
     return activities
 
 def _open_opencode_db():
-    """Open readonly; fallback to a temp copy if lock contention."""
-    try:
-        conn = sqlite3.connect(
-            f"file:{OPENCODE_DB}?mode=ro",
-            uri=True,
-            timeout=3,
-        )
-        conn.execute("PRAGMA busy_timeout = 3000")
-        conn.execute("SELECT count(*) FROM session")
-        return conn
-    except Exception as e:
-        log_warning(f"readonly open failed ({e}), falling back to temp copy")
-        tmp = tempfile.mktemp(suffix=".db", prefix="opencode_report_")
-        try:
-            shutil.copy2(str(OPENCODE_DB), tmp)
-            conn = sqlite3.connect(tmp, timeout=5)
-            conn.execute("PRAGMA busy_timeout = 5000")
-            return conn
-        except Exception as e2:
-            log_warning(f"temp copy also failed: {e2}")
-            return None
+    return _open_sqlite_readonly(OPENCODE_DB, "SELECT count(*) FROM session")
+
+
+def _open_codex_state_db():
+    return _open_sqlite_readonly(CODEX_STATE_DB, "SELECT count(*) FROM threads")
 
 def _load_known_repos():
     repos = {}
@@ -121,6 +132,39 @@ def _infer_project_from_messages(user_msgs, known_repos):
             if v in all_text:
                 return repo_name
     return None
+
+
+def _normalize_project_path(directory: str) -> str:
+    normalized_dir = directory or ""
+    if normalized_dir.startswith("//wsl.localhost/"):
+        parts = normalized_dir.split("/")
+        if len(parts) >= 5:
+            normalized_dir = "/" + "/".join(parts[4:])
+    if normalized_dir.startswith("\\\\?\\"):
+        normalized_dir = normalized_dir[4:]
+    return normalized_dir
+
+
+def _project_from_directory(directory: str, title: str, known_repos: dict, fallback_label: str) -> str:
+    normalized_dir = _normalize_project_path(directory)
+    home_path = str(Path.home())
+    home_name = Path(home_path).name
+    win_user = _detect_win_username()
+    user_home_dirs = {home_path, f"/home/{home_name}"}
+    if win_user:
+        user_home_dirs.update({
+            f"/mnt/c/Users/{win_user}",
+            f"C:/Users/{win_user}",
+            f"C:\\Users\\{win_user}",
+        })
+    if not normalized_dir or normalized_dir in user_home_dirs:
+        inferred = _infer_project_from_messages([title], known_repos)
+        return inferred if inferred else fallback_label
+    dir_name = Path(normalized_dir).name
+    if dir_name in ("Users", home_name, win_user):
+        inferred = _infer_project_from_messages([title], known_repos)
+        return inferred if inferred else fallback_label
+    return dir_name or fallback_label
 
 
 def read_opencode_sessions(start, end):
@@ -163,26 +207,7 @@ def read_opencode_sessions(start, end):
                     except Exception:
                         pass
             dt = datetime.fromtimestamp(created / 1000)
-            home_path = str(Path.home())
-            home_name = Path(home_path).name
-            normalized_dir = directory or ""
-            if normalized_dir.startswith("//wsl.localhost/"):
-                parts = normalized_dir.split("/")
-                if len(parts) >= 5:
-                    normalized_dir = "/" + "/".join(parts[4:])
-            win_user = _detect_win_username()
-            user_home_dirs = {home_path, f"/home/{home_name}"}
-            if win_user:
-                user_home_dirs.add(f"/mnt/c/Users/{win_user}")
-            if not normalized_dir or normalized_dir in user_home_dirs:
-                inferred = _infer_project_from_messages(user_msgs, known_repos)
-                project = inferred if inferred else "opencode 杂项"
-            else:
-                dir_name = Path(normalized_dir).name
-                if dir_name in ("Users", home_name, win_user):
-                    project = "opencode 杂项"
-                else:
-                    project = dir_name
+            project = _project_from_directory(directory or "", " ".join(user_msgs), known_repos, "opencode 杂项")
             sessions.append({
                 "type": "opencode_session",
                 "time": dt.strftime("%Y-%m-%dT%H:%M:%S"),
@@ -210,11 +235,61 @@ def read_opencode_sessions(start, end):
             pass
     return sessions
 
+
+def read_codex_sessions(start, end):
+    sessions = []
+    if not CODEX_STATE_DB.exists():
+        return sessions
+    conn = _open_codex_state_db()
+    if conn is None:
+        return sessions
+    known_repos = _load_known_repos()
+    try:
+        cur = conn.cursor()
+        start_ts = int(start.timestamp())
+        end_ts = int(end.timestamp())
+        cur.execute("""
+            SELECT id, title, created_at, cwd, first_user_message, preview, thread_source
+            FROM threads
+            WHERE created_at >= ? AND created_at <= ?
+            ORDER BY created_at DESC
+        """, (start_ts, end_ts))
+        for row in cur.fetchall():
+            sid, title, created, cwd, first_user_message, preview, thread_source = row
+            chosen_title = (title or first_user_message or preview or "").strip() or "untitled"
+            project = _project_from_directory(cwd or "", chosen_title, known_repos, "codex 杂项")
+            dt = datetime.fromtimestamp(created)
+            sessions.append({
+                "type": "codex_session",
+                "time": dt.strftime("%Y-%m-%dT%H:%M:%S"),
+                "session_id": sid,
+                "title": chosen_title,
+                "directory": cwd or "",
+                "project": project,
+                "thread_source": thread_source or "",
+                "user_messages": [m for m in (first_user_message, preview) if m],
+            })
+    except Exception as e:
+        log_warning(f"read_codex_sessions error: {e}")
+    finally:
+        try:
+            db_path = conn.execute("PRAGMA database_list").fetchall()
+            conn.close()
+            for _, _, path in db_path:
+                if path and path.startswith(tempfile.gettempdir()):
+                    try:
+                        os.unlink(path)
+                    except OSError:
+                        pass
+        except Exception:
+            pass
+    return sessions
+
 def group_by_project(activities):
     groups = {}
     for a in activities:
         t = a.get("type", "")
-        if t == "opencode_session":
+        if t in ("opencode_session", "codex_session"):
             key = a.get("project", "opencode")
         elif t == "shell_command":
             cwd = a.get("cwd", "")
@@ -227,7 +302,8 @@ def group_by_project(activities):
 def print_report(start, end, mode="concise"):
     daily = read_daily_logs(start, end)
     opencode = read_opencode_sessions(start, end)
-    all_activities = daily + opencode
+    codex = read_codex_sessions(start, end)
+    all_activities = daily + opencode + codex
     groups = group_by_project(all_activities)
 
     start_str = start.strftime("%Y-%m-%d")
@@ -235,7 +311,7 @@ def print_report(start, end, mode="concise"):
 
     print(f"## 周报：{start_str} ~ {end_str}\n")
 
-    stats = {"git": 0, "svn": 0, "shell": 0, "opencode": 0, "opencode_sub": 0}
+    stats = {"git": 0, "svn": 0, "shell": 0, "opencode": 0, "opencode_sub": 0, "codex": 0}
     for a in all_activities:
         t = a.get("type", "")
         if "git" in t: stats["git"] += 1
@@ -246,6 +322,8 @@ def print_report(start, end, mode="concise"):
                 stats["opencode_sub"] += 1
             else:
                 stats["opencode"] += 1
+        elif t == "codex_session":
+            stats["codex"] += 1
 
     for project, items in sorted(groups.items()):
         if project == "other":
@@ -260,7 +338,7 @@ def print_report(start, end, mode="concise"):
                     continue
                 seen.add(msg)
                 display_items.append(("commit", item))
-            elif t == "opencode_session":
+            elif t in ("opencode_session", "codex_session"):
                 if item.get("is_subagent") and mode == "concise":
                     continue
                 title = item.get("title", "") or ""
@@ -319,12 +397,17 @@ def print_report(start, end, mode="concise"):
         print(f"- SVN Commits: {stats['svn']}")
     if stats["shell"]:
         print(f"- Shell 命令: {stats['shell']} 条")
-    total_ai = stats["opencode"] + stats["opencode_sub"]
-    if total_ai:
+    if stats["codex"]:
+        print(f"- Codex 会话: {stats['codex']} 次")
+    if stats["opencode"] or stats["opencode_sub"]:
+        opencode_total = stats["opencode"] + stats["opencode_sub"]
         if stats["opencode_sub"]:
-            print(f"- AI 会话: {total_ai} 次 (含 {stats['opencode_sub']} 次子任务)")
+            print(f"- OpenCode 会话: {opencode_total} 次 (含 {stats['opencode_sub']} 次子任务)")
         else:
-            print(f"- AI 会话: {total_ai} 次")
+            print(f"- OpenCode 会话: {opencode_total} 次")
+    total_ai = stats["opencode"] + stats["opencode_sub"] + stats["codex"]
+    if total_ai:
+        print(f"- AI 会话总计: {total_ai} 次")
 
 if __name__ == "__main__":
     config = load_config()

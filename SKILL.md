@@ -11,7 +11,7 @@ metadata:
 ## What I do
 
 1. 读取 `~/.local/share/work-tracker/daily/` 下指定范围内的 JSON 日志
-2. 同时查询 opencode 的 SQLite 数据库获取对话记录
+2. 同时查询 OpenCode / Codex 的本地会话数据
 3. 将所有活动按项目和类型分类
 4. 使用 AI 智能总结，生成结构化周报
 
@@ -21,13 +21,13 @@ metadata:
 
 ```bash
 # concise 模式（默认，每条 5-15 字摘要）
-python3 ~/.config/opencode/skills/weekly-report/reporter.py concise
+python3 reporter.py concise
 
 # detailed 模式（完整技术细节）
-python3 ~/.config/opencode/skills/weekly-report/reporter.py detailed
+python3 reporter.py detailed
 
 # 指定天数 + 模式
-python3 ~/.config/opencode/skills/weekly-report/reporter.py 14 detailed
+python3 reporter.py 14 detailed
 ```
 
 ## Report modes
@@ -46,7 +46,9 @@ python3 ~/.config/opencode/skills/weekly-report/reporter.py 14 detailed
 
 ### 统计
 - Git Commits: 12  |  SVN Commits: 5
-- Shell 命令: 245 条  |  AI 会话: 8 次
+- Shell 命令: 245 条
+- Codex 会话: 4 次  |  OpenCode 会话: 8 次
+- AI 会话总计: 12 次
 ```
 
 ### detailed

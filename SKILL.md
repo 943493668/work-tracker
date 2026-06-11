@@ -1,6 +1,6 @@
 ---
 name: weekly-report
-description: 从本地活动日志（Git/SVN 提交、Shell 命令、opencode 对话）自动生成精简周报，支持 concise 和 detailed 两种模式，按项目分类，支持任意时间段。
+description: 汇总本地开发活动与 AI 会话记录，按项目生成 concise 或 detailed 周报，适合做周报上交和工作复盘。
 license: MIT
 compatibility: opencode
 metadata:

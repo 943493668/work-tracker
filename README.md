@@ -1,16 +1,20 @@
 # Work Tracker
 
-跨工具工作活动追踪与周报生成工具。自动采集 Git、SVN、Shell 命令和 opencode 对话记录，一键生成精简周报。
+一个面向开发者的本地工作记录与周报生成工具。
+
+Work Tracker 会持续收集你在本机上的开发活动，包括 Git / SVN 提交、Shell 命令，以及 AI 编程工具中的对话记录，再按项目归类整理成可直接提交的周报。
 
 ## 为什么用它
 
-还在为写周报翻聊天记录、查 Git log 而头疼？Work Tracker 帮你自动化这个过程。
+很多周报并不是不会写，而是信息散在 Git、终端、聊天记录和不同项目目录里，回头整理很耗时间。Work Tracker 的目标就是把这件事自动化。
 
-**做什么：** 后台静默采集你的日常开发活动 —— Git commit、SVN commit、终端命令、opencode 对话 —— 统一写入 JSON 日志（每日 ~50KB）。
+**它解决什么问题：** 把分散的开发痕迹统一沉淀到本地日志里，生成按项目分组的工作摘要，减少手工翻记录和补记忆。
 
-**怎么用：** 在 opencode 输入"生成周报"，即可按项目分组输出精简摘要（concise，适合上交）或详细复盘（detailed，适合团队 review）。Cursor / Claude Code / Windsurf 用户只需把 rules 文件放到对应目录同样触发。
+**它怎么工作：** 定时采集仓库提交，记录终端命令，读取 AI 会话数据，再按时间范围输出 concise 或 detailed 两种周报。
 
-**特点：** 零依赖（不需要 sudo 或装第三方库）、零常驻（无 systemd/inotifywait）、全本地存储、支持 WSL + Windows opencode 混合环境。别人 clone 后一条 `bash install.sh` 就能用。
+**它适合什么场景：** 个人周报、项目复盘、阶段工作回顾，以及需要回看最近几天都做了什么的时候。
+
+**它的特点：** 全本地存储、零常驻服务、安装简单、适合 WSL + Windows 混合开发环境，也能和 opencode / Codex 等工具一起使用。
 
 ## 功能
 
